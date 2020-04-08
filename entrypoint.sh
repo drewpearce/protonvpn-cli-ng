@@ -11,3 +11,5 @@ else
     echo "Connecting to fastest $MODE node..."
     protonvpn c "--$MODE"
 fi
+
+tail -f .pvpn-cli/pvpn-cli.log
