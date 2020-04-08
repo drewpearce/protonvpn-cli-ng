@@ -1,0 +1,17 @@
+version: '3'
+services:
+  vpn:
+    build: ./
+    env_file: .env  # Use a .env file OR specify environment options below
+    environment:
+    - PROTON_USER=<pvpn_user_name>
+    - PROTON_PASS=<pvpn_password>
+    - PROTON_TIER=<pvpn tier -- Free|Basic|Plus|Visionary>
+    - PROTON_PROTOCOL=<vpn default protocol -- TCP|UDP>
+    - MODE=<connection feature  or country code -- sc|p2p|tor|[country codes]>  # Optional
+    cap_add:
+    - NET_ADMIN
+    devices:
+    - "/dev/net/tun:/dev/net/tun"
+    volumes:
+    - "/dev/net:/dev/net:z"
