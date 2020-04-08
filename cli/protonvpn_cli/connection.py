@@ -583,10 +583,21 @@ def manage_dns(mode, dns_server=False):
 
         # Remove previous nameservers
         dns_regex = re.compile(r"^nameserver .*$")
+        with open(resolvconf_path) as f:
+            text = f.read()
 
-        for line in fileinput.input(resolvconf_path, inplace=True):
-            if not dns_regex.search(line) and not dns_regex.search(line):
-                print(line, end="")
+        text = '\n'.join([l for l in text.splitlines()
+                          if not re.match(dns_regex, l)])
+
+        with open(resolvconf_path, 'w') as f:
+            f.write(text)
+
+        with open(backupfile, 'r') as backup_handle:
+            with open(resolvconf_path, 'w') as resolvconf_handle:
+                for line in backup_handle:
+                    if not dns_regex.search(line):
+                        resolvconf_handle.write(line)
+
         logger.debug("Removed existing DNS Servers")
 
         # Add ProtonVPN managed DNS Server to resolv.conf
@@ -642,6 +653,10 @@ def manage_ipv6(mode):
 
     ipv6_backupfile = os.path.join(CONFIG_DIR, "ipv6.backup")
     ip6tables_backupfile = os.path.join(CONFIG_DIR, "ip6tables.backup")
+    ip6tables_path = subprocess.run(
+        ["which", "ip6tables"], stdout=subprocess.PIPE)
+    if not ip6tables_path.stdout:
+        return
 
     if mode == "disable":
 

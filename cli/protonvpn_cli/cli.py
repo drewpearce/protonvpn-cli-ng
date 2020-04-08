@@ -2,7 +2,7 @@
 A CLI for ProtonVPN.
 
 Usage:
-    protonvpn init
+    protonvpn init [-e | --env]
     protonvpn (c | connect) [<servername>] [-p <protocol>]
     protonvpn (c | connect) [-f | --fastest] [-p <protocol>]
     protonvpn (c | connect) [--cc <code>] [-p <protocol>]
@@ -20,6 +20,7 @@ Usage:
     protonvpn (-v | --version)
 
 Options:
+    -e, --env           Use env vars for init instead of interactive.
     -f, --fastest       Select the fastest ProtonVPN server.
     -r, --random        Select a random ProtonVPN server.
     --cc CODE           Determine the country for fastest connect.
@@ -93,7 +94,7 @@ def cli():
 
     # Parse arguments
     if args.get("init"):
-        init_cli()
+        init_cli(use_env=args.get("--env"))
     elif args.get("c") or args.get("connect"):
         check_root()
         check_init()
@@ -148,30 +149,84 @@ def cli():
         print_examples()
 
 
-def init_cli():
+def init_cli_env():
+    config_vars = {
+        "username": "PROTON_USER",
+        "pass": "PROTON_PASS",
+        "tier": "PROTON_TIER",
+        "protocol": "PROTON_PROTOCOL"
+    }
+    validators = {
+        "tier": ["Free", "Basic", "Plus", "Visionary"],
+        "protocol": ["TCP", "UDP"]
+    }
+
+    for key, env_var in config_vars.items():
+        temp = os.environ.get(env_var)
+        if not temp:
+            print("You specificed environment initialization, but did not set "
+                  "{} in your environment.".format(env_var))
+            sys.exit(1)
+
+        if key in validators:
+            if temp not in validators[key]:
+                print("Please set a valid value for {}:\n{}".format(
+                    env_var, ", ".join(validators[key])))
+                sys.exit(1)
+
+        config_vars[key] = temp
+
+    config_vars["tier"] = validators["tier"].index(config_vars["tier"])
+
+    init_config_file()
+    pull_server_data()
+    make_ovpn_template()
+
+    set_config_value("USER", "username", config_vars["username"])
+    set_config_value("USER", "tier", config_vars["tier"])
+    set_config_value("USER", "default_protocol", config_vars["protocol"])
+    set_config_value("USER", "dns_leak_protection", 1)
+    set_config_value("USER", "custom_dns", None)
+    set_config_value("USER", "killswitch", 0)
+
+    with open(PASSFILE, "w") as f:
+        f.write("{0}\n{1}".format(config_vars["username"], config_vars["pass"]))
+        logger.debug("Passfile created")
+        os.chmod(PASSFILE, 0o600)
+
+    set_config_value("USER", "initialized", 1)
+
+    print()
+    print("Done! Your account has been successfully initialized.")
+    logger.debug("Initialization completed.")
+
+
+def init_config_file():
+    """"Initialize configuration file."""
+
+    config = configparser.ConfigParser()
+    config["USER"] = {
+        "username": "None",
+        "tier": "None",
+        "default_protocol": "None",
+        "initialized": "0",
+        "dns_leak_protection": "1",
+        "custom_dns": "None",
+        "check_update_interval": "3",
+    }
+    config["metadata"] = {
+        "last_api_pull": "0",
+        "last_update_check": str(int(time.time())),
+    }
+
+    with open(CONFIG_FILE, "w") as f:
+        config.write(f)
+    change_file_owner(CONFIG_FILE)
+    logger.debug("pvpn-cli.cfg initialized")
+
+
+def init_cli(use_env=None):
     """Initialize the CLI."""
-
-    def init_config_file():
-        """"Initialize configuration file."""
-        config = configparser.ConfigParser()
-        config["USER"] = {
-            "username": "None",
-            "tier": "None",
-            "default_protocol": "None",
-            "initialized": "0",
-            "dns_leak_protection": "1",
-            "custom_dns": "None",
-            "check_update_interval": "3",
-        }
-        config["metadata"] = {
-            "last_api_pull": "0",
-            "last_update_check": str(int(time.time())),
-        }
-
-        with open(CONFIG_FILE, "w") as f:
-            config.write(f)
-        change_file_owner(CONFIG_FILE)
-        logger.debug("pvpn-cli.cfg initialized")
 
     check_root()
 
@@ -211,64 +266,67 @@ def init_cli():
     for line in init_msg:
         print(textwrap.fill(line, width=term_width))
 
-    # Set ProtonVPN Username and Password
-    ovpn_username, ovpn_password = set_username_password(write=False)
-
-    # Set the ProtonVPN Plan
-    user_tier = set_protonvpn_tier(write=False)
-
-    # Set default Protocol
-    user_protocol = set_default_protocol(write=False)
-
-    protonvpn_plans = {1: "Free", 2: "Basic", 3: "Plus", 4: "Visionary"}
-
-    print()
-    print(
-        "You entered the following information:\n" +
-        "Username: {0}\n".format(ovpn_username) +
-        "Password: {0}\n".format("*" * len(ovpn_password)) +
-        "Tier: {0}\n".format(protonvpn_plans[user_tier]) +
-        "Default protocol: {0}".format(user_protocol.upper())
-    )
-    print()
-
-    user_confirmation = input(
-        "Is this information correct? [Y/n]: "
-    ).strip().lower()
-
-    if user_confirmation == "y" or user_confirmation == "":
-        print("Writing configuration to disk...")
-        init_config_file()
-
-        pull_server_data()
-        make_ovpn_template()
-
-        # Change user tier to correct value
-        if user_tier == 4:
-            user_tier = 3
-        user_tier -= 1
-
-        set_config_value("USER", "username", ovpn_username)
-        set_config_value("USER", "tier", user_tier)
-        set_config_value("USER", "default_protocol", user_protocol)
-        set_config_value("USER", "dns_leak_protection", 1)
-        set_config_value("USER", "custom_dns", None)
-        set_config_value("USER", "killswitch", 0)
-
-        with open(PASSFILE, "w") as f:
-            f.write("{0}\n{1}".format(ovpn_username, ovpn_password))
-            logger.debug("Passfile created")
-            os.chmod(PASSFILE, 0o600)
-
-        set_config_value("USER", "initialized", 1)
-
-        print()
-        print("Done! Your account has been successfully initialized.")
-        logger.debug("Initialization completed.")
+    if use_env is True:
+        init_cli_env()
     else:
+        # Set ProtonVPN Username and Password
+        ovpn_username, ovpn_password = set_username_password(write=False)
+
+        # Set the ProtonVPN Plan
+        user_tier = set_protonvpn_tier(write=False)
+
+        # Set default Protocol
+        user_protocol = set_default_protocol(write=False)
+
+        protonvpn_plans = {1: "Free", 2: "Basic", 3: "Plus", 4: "Visionary"}
+
         print()
-        print("Please restart the initialization process.")
-        sys.exit(1)
+        print(
+            "You entered the following information:\n" +
+            "Username: {0}\n".format(ovpn_username) +
+            "Password: {0}\n".format("*" * len(ovpn_password)) +
+            "Tier: {0}\n".format(protonvpn_plans[user_tier]) +
+            "Default protocol: {0}".format(user_protocol.upper())
+        )
+        print()
+
+        user_confirmation = input(
+            "Is this information correct? [Y/n]: "
+        ).strip().lower()
+
+        if user_confirmation == "y" or user_confirmation == "":
+            print("Writing configuration to disk...")
+            init_config_file()
+
+            pull_server_data()
+            make_ovpn_template()
+
+            # Change user tier to correct value
+            if user_tier == 4:
+                user_tier = 3
+            user_tier -= 1
+
+            set_config_value("USER", "username", ovpn_username)
+            set_config_value("USER", "tier", user_tier)
+            set_config_value("USER", "default_protocol", user_protocol)
+            set_config_value("USER", "dns_leak_protection", 1)
+            set_config_value("USER", "custom_dns", None)
+            set_config_value("USER", "killswitch", 0)
+
+            with open(PASSFILE, "w") as f:
+                f.write("{0}\n{1}".format(ovpn_username, ovpn_password))
+                logger.debug("Passfile created")
+                os.chmod(PASSFILE, 0o600)
+
+            set_config_value("USER", "initialized", 1)
+
+            print()
+            print("Done! Your account has been successfully initialized.")
+            logger.debug("Initialization completed.")
+        else:
+            print()
+            print("Please restart the initialization process.")
+            sys.exit(1)
 
 
 def print_examples():
